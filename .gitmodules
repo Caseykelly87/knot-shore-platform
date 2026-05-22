@@ -1,0 +1,12 @@
+[submodule "services/sim-engine"]
+	path = services/sim-engine
+	url = https://github.com/Caseykelly87/Knot-shore-grocery-simulation-engine.git
+[submodule "services/etl"]
+	path = services/etl
+	url = https://github.com/Caseykelly87/economic-data-etl.git
+[submodule "services/api"]
+	path = services/api
+	url = https://github.com/Caseykelly87/economic-data-api
+[submodule "services/portal"]
+	path = services/portal
+	url = https://github.com/Caseykelly87/knot-shore-portal.git
