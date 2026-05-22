@@ -1,0 +1,90 @@
+# Knot Shore Grocery Platform — end-to-end orchestration.
+#
+# The four services form a one-direction pipeline. The two one-shot
+# services run in sequence and exit; the two long-running services start
+# once their upstream data is in place:
+#
+#   sim-engine  (one-shot)  generates daily CSV output
+#        v
+#   etl         (one-shot)  builds the canonical parquets
+#        v
+#   api         (service)   serves the canonical parquets
+#        v
+#   portal      (service)   renders the dashboard from the api
+
+services:
+  sim-engine:
+    build:
+      context: ./services/sim-engine
+      dockerfile: ../../docker/sim-engine.Dockerfile
+    volumes:
+      - sim-output:/data/sim-output
+
+  etl:
+    build:
+      context: ./services/etl
+      dockerfile: ../../docker/etl.Dockerfile
+    volumes:
+      - sim-output:/data/sim-output:ro
+      - canonical:/data/canonical
+    depends_on:
+      sim-engine:
+        condition: service_completed_successfully
+
+  api:
+    build:
+      context: ./services/api
+      dockerfile: ../../docker/api.Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - canonical:/data/canonical:ro
+    environment:
+      # The four canonical parquet paths select online mode: when all
+      # four resolve to readable files, /health reports mode "online".
+      STORE_METRICS_PATH: /data/canonical/store_daily_metrics.parquet
+      ANOMALY_FLAGS_PATH: /data/canonical/anomaly_flags.parquet
+      DEPARTMENT_METRICS_PATH: /data/canonical/department_daily_metrics.parquet
+      DIM_STORES_PATH: /data/canonical/dim_stores.parquet
+      # The macro pipeline's Postgres is out of scope for this platform.
+      # Settings still requires these to construct, and the SQLAlchemy
+      # engine is created lazily, so the API serves the grocery side
+      # normally; /health reports the macro pipeline as unavailable,
+      # which is the "degraded" (HTTP 200) case. DB_HOST is a literal
+      # address that refuses connections immediately — this keeps the
+      # /health macro probe fast, where a bogus hostname would stall
+      # every probe on a slow DNS lookup.
+      DB_HOST: 127.0.0.1
+      DB_NAME: unused
+      DB_USER: unused
+      DB_PASSWORD: unused
+    depends_on:
+      etl:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  portal:
+    build:
+      context: ./services/portal
+      dockerfile: ../../docker/portal.Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      API_MODE: online
+      API_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  sim-output:
+  canonical:
+
+networks:
+  default:
+    name: knot-shore-platform
