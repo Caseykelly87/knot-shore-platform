@@ -1,0 +1,99 @@
+name: byte-identity
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+    branches:
+      - dev
+      - main
+
+jobs:
+  verify-canonical-byte-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Compare ETL canonical parquets against API fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          etl_canonical_dir="services/etl/data/processed/canonical"
+          api_fixtures_dir="services/api/app/fixtures"
+
+          if [ ! -d "$etl_canonical_dir" ]; then
+            echo "ETL canonical directory not found: $etl_canonical_dir"
+            exit 1
+          fi
+          if [ ! -d "$api_fixtures_dir" ]; then
+            echo "API fixtures directory not found: $api_fixtures_dir"
+            exit 1
+          fi
+
+          shopt -s nullglob
+          etl_parquets=("$etl_canonical_dir"/*.parquet)
+          shopt -u nullglob
+
+          if [ "${#etl_parquets[@]}" -eq 0 ]; then
+            echo "No .parquet files found in $etl_canonical_dir"
+            exit 1
+          fi
+
+          matched=0
+          mismatched=0
+          missing=0
+          total=0
+
+          for etl_parquet in "${etl_parquets[@]}"; do
+            total=$((total + 1))
+            parquet_name=$(basename "$etl_parquet")
+            api_parquet="$api_fixtures_dir/$parquet_name"
+
+            if [ ! -f "$api_parquet" ]; then
+              echo "MISSING: $parquet_name in $api_fixtures_dir"
+              missing=$((missing + 1))
+              continue
+            fi
+
+            etl_hash=$(sha256sum "$etl_parquet" | awk '{print $1}')
+            api_hash=$(sha256sum "$api_parquet" | awk '{print $1}')
+
+            if [ "$etl_hash" = "$api_hash" ]; then
+              printf 'MATCH    %s  %s\n' "$parquet_name" "$etl_hash"
+              matched=$((matched + 1))
+            else
+              echo "MISMATCH $parquet_name"
+              echo "  ETL canonical ($etl_parquet): $etl_hash"
+              echo "  API fixture   ($api_parquet): $api_hash"
+              mismatched=$((mismatched + 1))
+            fi
+          done
+
+          shopt -s nullglob
+          api_parquets=("$api_fixtures_dir"/*.parquet)
+          shopt -u nullglob
+
+          for api_parquet in "${api_parquets[@]}"; do
+            parquet_name=$(basename "$api_parquet")
+            etl_parquet="$etl_canonical_dir/$parquet_name"
+            if [ ! -f "$etl_parquet" ]; then
+              echo "ORPHAN: $parquet_name in $api_fixtures_dir has no counterpart in $etl_canonical_dir"
+              missing=$((missing + 1))
+            fi
+          done
+
+          if [ "$mismatched" -gt 0 ] || [ "$missing" -gt 0 ]; then
+            echo ""
+            echo "Byte-identity check failed: $mismatched mismatched, $missing missing or orphan."
+            exit 1
+          fi
+
+          echo ""
+          echo "$matched of $total canonical parquets match between ETL and API."
