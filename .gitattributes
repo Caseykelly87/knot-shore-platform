@@ -1,0 +1,6 @@
+# Normalize line endings for text files
+* text=auto
+*.yml text eol=lf
+*.yaml text eol=lf
+*.Dockerfile text eol=lf
+*.sh text eol=lf
