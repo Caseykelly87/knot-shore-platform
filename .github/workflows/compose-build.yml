@@ -1,0 +1,38 @@
+name: compose-build
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+    branches:
+      - dev
+      - main
+
+jobs:
+  verify-compose-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      # GitHub-hosted ubuntu-latest runners ship Docker Engine, Buildx,
+      # and the Compose v2 plugin pre-installed, so no separate setup
+      # step is needed. Avoiding docker/setup-buildx-action keeps the
+      # workflow's Action surface to actions/checkout only.
+      - name: Build all compose services
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose build --pull
+
+      - name: Report built image sizes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image ls --filter "reference=knot-shore-platform-*"
