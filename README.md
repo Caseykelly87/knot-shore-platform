@@ -343,8 +343,10 @@ section for what that looks like in the logs.
 ## Service repositories
 
 Each submodule is its own repository with its own CI, tests, and
-README. Editing a service means committing in that repo first, then
-updating the orchestration's submodule reference.
+README. Submodule pointers track each subrepo's `dev` branch tip,
+so `git submodule update --remote` advances each service to its
+latest reviewed work. Editing a service means committing in that
+repo first, then updating the orchestration's submodule reference.
 
 | Service | Path | Repository |
 |---|---|---|
@@ -359,27 +361,27 @@ Brief role of each:
   store-day summaries and department-grain detail as CSV under
   `output/daily/{MM}/{DD}/{YYYY}/` for the paired-year window, plus a
   ground-truth `anomaly_log.csv` used downstream only for measuring
-  detection quality (not for detection itself). 122 tests; the single
+  detection quality (not for detection itself). 138 tests; the single
   most important asserts byte-identity across successive runs of the same
   seed.
 - **ETL** — two pipelines in one repo. The grocery pipeline ingests the
   sim engine's CSV output, validates schema and referential integrity,
   runs the six detection rules, and writes four canonical parquets. The
-  macro pipeline ingests FRED / BLS / USDA ERS series into Postgres; not
-  exercised by this compose. 262 tests across both pipelines, no live API
-  or DB calls in the suite.
+  macro pipeline ingests FRED / BLS / USDA ERS series into SQLite by
+  default (Postgres via `DATABASE_URL`); not exercised by this compose.
+  271 tests across both pipelines, no live API or DB calls in the suite.
 - **API** — FastAPI service that serves the canonical parquets as JSON.
   Five grocery endpoints (`/store-metrics`, `/department-metrics`,
   `/anomalies`, `/dashboard-summary`, `/dim-stores`) plus the macro
   endpoints that this compose leaves unavailable. Pydantic v2 schemas
-  enforce response contracts. 122 tests, all isolated from live
+  enforce response contracts. 142 tests, all isolated from live
   databases.
 - **Portal** — Next.js 14 App Router application. Three primary pages
   (dashboard, store drilldown, exceptions) plus the eight-page about
   section. Server components for data fetching, recharts for charts (v2
-  pinned), URL-synced state via `useSearchParams`. 54 tests covering pure
-  logic and infrastructure boundaries; presentational components are
-  visually reviewed rather than DOM-tested.
+  pinned), URL-synced state via `useSearchParams`. 196 tests covering
+  pure logic and infrastructure boundaries; presentational components
+  are visually reviewed rather than DOM-tested.
 
 ## Troubleshooting
 
