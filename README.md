@@ -383,7 +383,7 @@ Brief role of each:
   seed.
 - **ETL** — two pipelines in one repo. The grocery pipeline ingests the
   sim engine's CSV output, validates schema and referential integrity,
-  runs the six detection rules, and writes four canonical parquets. The
+  runs the seven detection rules, and writes four canonical parquets. The
   macro pipeline ingests FRED / BLS / USDA ERS series into SQLite by
   default (Postgres via `DATABASE_URL`); not exercised by this compose.
   271 tests across both pipelines, no live API or DB calls in the suite.
@@ -396,7 +396,7 @@ Brief role of each:
 - **Portal** — Next.js 14 App Router application. Three primary pages
   (dashboard, store drilldown, exceptions) plus the eight-page about
   section. Server components for data fetching, recharts for charts (v2
-  pinned), URL-synced state via `useSearchParams`. 196 tests covering
+  pinned), URL-synced state via `useSearchParams`. 199 tests covering
   pure logic and infrastructure boundaries; presentational components
   are visually reviewed rather than DOM-tested.
 
