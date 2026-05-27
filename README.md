@@ -5,6 +5,10 @@ Four independently maintained services — a deterministic simulation engine,
 an ETL with anomaly detection, a FastAPI service, and a Next.js portal —
 wired together into a single `docker compose up` demonstration.
 
+**Live demo:** https://knot-shore-portal.vercel.app — the portal alone, served
+against bundled JSON fixtures. For the full pipeline running end-to-end
+against live (non-fixture) data, follow [Quick start](#quick-start) below.
+
 - **One-command run.** Clone with submodules, `docker compose up`, open
   `http://localhost:3000`. The platform generates 18 months of synthetic data,
   runs the canonical pipeline, and serves the resulting dashboards from a run
@@ -13,13 +17,18 @@ wired together into a single `docker compose up` demonstration.
   produces byte-identical sim output, byte-identical canonical parquets, and
   byte-identical API responses. Verified mechanically in the upstream test
   suites.
-- **Detection that mixes statistical and structural rules.** Five band rules
-  over store-day metrics and a structural-integrity rule that checks
-  department-grain coverage, all evaluated through one pipeline.
+- **Detection across three rule kinds.** Five static-band rules over
+  store-day metrics (`revenue_band`, `labor_pct_band`, `avg_ticket_band`,
+  `transactions_band`, `yoy_comp`), one rolling-baseline rule
+  (`revenue_zscore_28d`) that catches gradual drift the static bands miss,
+  and one structural-integrity rule (`department_coverage`) that flags
+  missing or duplicated department rows at department grain.
 - **Dual-mode architecture treated as a contract.** The portal and the API
   each support an offline mode (bundled fixtures) and an online mode (live
   upstream) without code changes; this orchestration runs both in online
-  mode end-to-end.
+  mode end-to-end. Offline mode is exercised by running any single service
+  standalone from its own repo; this compose stack runs online mode by
+  design.
 - **Cross-service correlation.** A single `X-Request-ID` threads from the
   portal through the API; structured JSON logs in both services share the
   same ID per user request.
@@ -244,22 +253,30 @@ suite.
 Depth: [`/about/decisions#per-date-deterministic-seeding`](http://localhost:3000/about/decisions),
 the sim engine's [README](services/sim-engine/README.md#determinism).
 
-### Detection that mixes band and structural rules
+### Detection that mixes band, baseline, and structural rules
 
-The detection layer (in the ETL) evaluates five statistical-band rules
-over store-day metrics — `revenue_band`, `labor_pct_band`,
-`avg_ticket_band`, `transactions_band`, `yoy_comp` — and one
-structural-integrity rule, `department_coverage`, that runs over the
-department-grain metrics and flags any store-day whose department row
-count is not 10 or that carries a duplicated `department_id`.
+The detection layer (in the ETL) evaluates seven rules across three
+kinds. Five statistical-band rules over store-day metrics —
+`revenue_band`, `labor_pct_band`, `avg_ticket_band`, `transactions_band`,
+`yoy_comp` — check whether each day's value sits inside an expected
+band. One rolling-baseline rule, `revenue_zscore_28d`, computes the
+trailing 28-day mean and stddev of `total_sales` per store (current row
+excluded, the same shape `yoy_comp` uses against T-365) and flags any
+day whose `|z|` is at least 2.5; severity reads `|z|` directly with
+buckets at 2.5–3 / 3–4 / ≥ 4. The rolling rule catches gradual drift
+that sits inside the static bands but well outside the store's recent
+distribution. One structural-integrity rule, `department_coverage`,
+runs over the department-grain metrics and flags any store-day whose
+department row count is not 10 or that carries a duplicated
+`department_id`.
 
-Both kinds of rule write to the same `anomaly_flags.parquet` with the
-same schema. The portal's exceptions view doesn't care which kind a flag
-came from. Band rules and structural rules use the same severity scoring
-(`distance_from_band / band_half_width`, bucketed into info / warning /
-critical) and the same per-rule filter UI. The detection vocabulary is
-extensible: a new rule at either grain plugs into the same evaluation
-pipeline.
+All three kinds of rule write to the same `anomaly_flags.parquet` with
+the same schema. The portal's exceptions view doesn't care which kind a
+flag came from. Band and baseline rules use the same `severity_score`
+field (with kind-specific bucket cutoffs) and the structural rule emits
+a fixed `severity_level`; the same per-rule filter UI surfaces all
+three. The detection vocabulary is extensible: a new rule at any grain
+plugs into the same evaluation pipeline.
 
 Depth: ETL [README](services/etl/README.md#exception-detection),
 [`/about/decisions`](http://localhost:3000/about/decisions) (the
@@ -366,7 +383,7 @@ Brief role of each:
   seed.
 - **ETL** — two pipelines in one repo. The grocery pipeline ingests the
   sim engine's CSV output, validates schema and referential integrity,
-  runs the six detection rules, and writes four canonical parquets. The
+  runs the seven detection rules, and writes four canonical parquets. The
   macro pipeline ingests FRED / BLS / USDA ERS series into SQLite by
   default (Postgres via `DATABASE_URL`); not exercised by this compose.
   271 tests across both pipelines, no live API or DB calls in the suite.
@@ -379,7 +396,7 @@ Brief role of each:
 - **Portal** — Next.js 14 App Router application. Three primary pages
   (dashboard, store drilldown, exceptions) plus the eight-page about
   section. Server components for data fetching, recharts for charts (v2
-  pinned), URL-synced state via `useSearchParams`. 196 tests covering
+  pinned), URL-synced state via `useSearchParams`. 199 tests covering
   pure logic and infrastructure boundaries; presentational components
   are visually reviewed rather than DOM-tested.
 

@@ -4,7 +4,7 @@
 # shared volume and serves them. The four *_PATH environment variables
 # set by compose select online mode over the bundled fixtures.
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -23,6 +23,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # The app package. uvicorn imports app.main:app from the working
 # directory, and GROCERY_FIXTURES_DIR resolves relative to it.
 COPY app ./app
+
+# Run as a non-root user. The compose volume mount at /data/canonical
+# is read-only for this service, so no chown is required there;
+# /code is owned by appuser via the chown above.
+RUN useradd --create-home --uid 1000 appuser \
+ && chown -R appuser:appuser /code
+USER appuser
 
 EXPOSE 8000
 

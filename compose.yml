@@ -35,6 +35,7 @@ services:
     build:
       context: ./services/api
       dockerfile: ../../docker/api.Dockerfile
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
@@ -72,6 +73,7 @@ services:
     build:
       context: ./services/portal
       dockerfile: ../../docker/portal.Dockerfile
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
