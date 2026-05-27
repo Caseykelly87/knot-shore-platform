@@ -5,6 +5,10 @@ Four independently maintained services — a deterministic simulation engine,
 an ETL with anomaly detection, a FastAPI service, and a Next.js portal —
 wired together into a single `docker compose up` demonstration.
 
+**Live demo:** https://knot-shore-portal.vercel.app — the portal alone, served
+against bundled JSON fixtures. For the full pipeline running end-to-end
+against live (non-fixture) data, follow [Quick start](#quick-start) below.
+
 - **One-command run.** Clone with submodules, `docker compose up`, open
   `http://localhost:3000`. The platform generates 18 months of synthetic data,
   runs the canonical pipeline, and serves the resulting dashboards from a run
@@ -22,7 +26,9 @@ wired together into a single `docker compose up` demonstration.
 - **Dual-mode architecture treated as a contract.** The portal and the API
   each support an offline mode (bundled fixtures) and an online mode (live
   upstream) without code changes; this orchestration runs both in online
-  mode end-to-end.
+  mode end-to-end. Offline mode is exercised by running any single service
+  standalone from its own repo; this compose stack runs online mode by
+  design.
 - **Cross-service correlation.** A single `X-Request-ID` threads from the
   portal through the API; structured JSON logs in both services share the
   same ID per user request.
