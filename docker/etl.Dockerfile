@@ -22,6 +22,14 @@ COPY src ./src
 COPY scripts ./scripts
 COPY config ./config
 
+# Run as a non-root user. /app is chowned here; /data/canonical is a
+# compose-managed named volume — if its default ownership prevents the
+# pipeline writing parquets, the compose file will need a complementary
+# adjustment (entrypoint chown or user: directive).
+RUN useradd --create-home --uid 1000 appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 # build_canonical_fixtures.py orchestrates the ingest/transform stage
 # (sim_cli) and the detection stage (detect_cli), writing all four
 # canonical parquets to --output-dir.

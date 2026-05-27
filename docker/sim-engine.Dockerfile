@@ -21,6 +21,14 @@ COPY src ./src
 COPY seed_data ./seed_data
 RUN pip install --no-cache-dir -e .
 
+# Run as a non-root user. /app is chowned here; /data/sim-output is a
+# compose-managed named volume — if its default ownership prevents the
+# engine writing CSVs, the compose file will need a complementary
+# adjustment (entrypoint chown or user: directive).
+RUN useradd --create-home --uid 1000 appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 # Initialize the dimension and promotion tables, then backfill the two
 # 184-day canonical windows. backfill skips dates already present, so a
 # fresh volume yields a complete, deterministic run.
