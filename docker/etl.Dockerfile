@@ -4,7 +4,7 @@
 # transform and detection stages, writes the four canonical parquets to
 # the shared canonical volume, then exits.
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

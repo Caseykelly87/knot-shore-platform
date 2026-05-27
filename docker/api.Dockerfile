@@ -4,7 +4,7 @@
 # shared volume and serves them. The four *_PATH environment variables
 # set by compose select online mode over the bundled fixtures.
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
