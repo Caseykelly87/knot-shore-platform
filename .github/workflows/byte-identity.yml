@@ -20,7 +20,7 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Compare ETL canonical parquets against API fixtures
+      - name: Compare ETL canonical artifacts against API fixtures
         shell: bash
         run: |
           set -euo pipefail
@@ -89,11 +89,66 @@ jobs:
             fi
           done
 
-          if [ "$mismatched" -gt 0 ] || [ "$missing" -gt 0 ]; then
+          # JSON artifacts are text: Git's `* text=auto` normalizes them to LF
+          # in the index, but a Windows working tree restores CRLF. Normalize
+          # line endings before hashing so the comparison reflects content,
+          # not the committer's platform. Parquets are binary and bypass
+          # autocrlf entirely, so they're hashed raw.
+          json_matched=0
+          json_mismatched=0
+          json_missing=0
+          json_total=0
+
+          shopt -s nullglob
+          etl_jsons=("$etl_canonical_dir"/*.json)
+          shopt -u nullglob
+
+          for etl_json in "${etl_jsons[@]}"; do
+            json_total=$((json_total + 1))
+            json_name=$(basename "$etl_json")
+            api_json="$api_fixtures_dir/$json_name"
+
+            if [ ! -f "$api_json" ]; then
+              echo "MISSING: $json_name in $api_fixtures_dir"
+              json_missing=$((json_missing + 1))
+              continue
+            fi
+
+            etl_hash=$(sed 's/\r$//' "$etl_json" | sha256sum | awk '{print $1}')
+            api_hash=$(sed 's/\r$//' "$api_json" | sha256sum | awk '{print $1}')
+
+            if [ "$etl_hash" = "$api_hash" ]; then
+              printf 'MATCH    %s  %s  (lf-normalized)\n' "$json_name" "$etl_hash"
+              json_matched=$((json_matched + 1))
+            else
+              echo "MISMATCH $json_name (lf-normalized)"
+              echo "  ETL canonical ($etl_json): $etl_hash"
+              echo "  API fixture   ($api_json): $api_hash"
+              json_mismatched=$((json_mismatched + 1))
+            fi
+          done
+
+          shopt -s nullglob
+          api_jsons=("$api_fixtures_dir"/*.json)
+          shopt -u nullglob
+
+          for api_json in "${api_jsons[@]}"; do
+            json_name=$(basename "$api_json")
+            etl_json="$etl_canonical_dir/$json_name"
+            if [ ! -f "$etl_json" ]; then
+              echo "ORPHAN: $json_name in $api_fixtures_dir has no counterpart in $etl_canonical_dir"
+              json_missing=$((json_missing + 1))
+            fi
+          done
+
+          if [ "$mismatched" -gt 0 ] || [ "$missing" -gt 0 ] || [ "$json_mismatched" -gt 0 ] || [ "$json_missing" -gt 0 ]; then
             echo ""
-            echo "Byte-identity check failed: $mismatched mismatched, $missing missing or orphan."
+            echo "Byte-identity check failed:"
+            echo "  parquets: $mismatched mismatched, $missing missing or orphan."
+            echo "  json:     $json_mismatched mismatched, $json_missing missing or orphan."
             exit 1
           fi
 
           echo ""
           echo "$matched of $total canonical parquets match between ETL and API."
+          echo "$json_matched of $json_total canonical json artifacts match between ETL and API (lf-normalized)."
