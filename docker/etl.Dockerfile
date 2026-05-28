@@ -28,6 +28,12 @@ COPY config ./config
 # adjustment (entrypoint chown or user: directive).
 RUN useradd --create-home --uid 1000 appuser \
  && chown -R appuser:appuser /app
+
+# Pre-create the named-volume mount point with appuser ownership.
+# See sim-engine.Dockerfile for the full explanation; same Linux
+# named-volume ownership issue applies to the canonical volume.
+USER root
+RUN mkdir -p /data/canonical && chown -R appuser:appuser /data
 USER appuser
 
 # build_canonical_fixtures.py orchestrates the ingest/transform stage

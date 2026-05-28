@@ -27,6 +27,15 @@ RUN pip install --no-cache-dir -e .
 # adjustment (entrypoint chown or user: directive).
 RUN useradd --create-home --uid 1000 appuser \
  && chown -R appuser:appuser /app
+
+# Pre-create the named-volume mount point with appuser ownership.
+# On Docker Desktop, named volumes inherit ownership from the running
+# process. On the Linux overlay driver used by ubuntu-latest runners,
+# they default to root:root regardless — blocking the non-root appuser
+# from creating subdirectories. Pre-creating and chowning here makes
+# the volume mount inherit appuser ownership.
+USER root
+RUN mkdir -p /data/sim-output && chown -R appuser:appuser /data
 USER appuser
 
 # Initialize the dimension and promotion tables, then backfill the two
