@@ -1,0 +1,151 @@
+name: e2e-smoke
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+    branches:
+      - dev
+      - main
+
+jobs:
+  smoke-compose-stack:
+    runs-on: ubuntu-latest
+    # A fresh `--build` of all four images plus the one-shot sim/etl run
+    # can take several minutes; 20 is generous headroom while still
+    # capping a hung healthcheck well short of a full runner hour.
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      # GitHub-hosted ubuntu-latest runners ship Docker Engine, the
+      # Compose v2 plugin, curl, and jq pre-installed, so no separate
+      # setup step is needed. Keeping the workflow's Action surface to
+      # actions/checkout only matches compose-build.yml.
+      - name: Bring up the stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          # sim-engine and etl run to completion in sequence; compose
+          # honours the depends_on conditions, so this returns once the
+          # one-shot upstreams have exited 0 and api/portal have started.
+          #
+          # If compose up fails, capture logs and final container state
+          # inline before the step exits. The `if: failure()` step at the
+          # end of the job also dumps logs, but in the GHA + Linux
+          # environment a failed `compose up -d --build` can leave
+          # containers in a state where the subsequent `docker compose ps`
+          # returns empty. Capturing here keeps the diagnostic data
+          # attached to this step's output.
+          if ! docker compose up -d --build; then
+            echo "::error::docker compose up failed; dumping diagnostics inline"
+            echo "::group::docker compose ps -a"
+            docker compose ps -a || true
+            echo "::endgroup::"
+            for svc in sim-engine etl api portal; do
+              echo "::group::$svc logs"
+              docker compose logs --no-color "$svc" || true
+              echo "::endgroup::"
+            done
+            echo "::group::docker compose config"
+            docker compose config || true
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      - name: Wait for the api healthcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The api carries a compose healthcheck (curl -f /health, 5s
+          # interval, 5 retries, 20s start period). Poll the container's
+          # health status rather than sleeping a fixed interval: up to
+          # 120s (24 * 5s), break the moment it reports healthy.
+          api_cid=$(docker compose ps -q api)
+          if [ -z "$api_cid" ]; then
+            echo "api container not found"
+            exit 1
+          fi
+          status=""
+          for i in $(seq 1 24); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' "$api_cid")
+            echo "api health: $status (attempt $i/24)"
+            [ "$status" = "healthy" ] && break
+            sleep 5
+          done
+          [ "$status" = "healthy" ] || { echo "api not healthy"; exit 1; }
+
+      - name: Assert the api serves real online data
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Liveness alone is not enough: prove the api came up in online
+          # mode (compose wires the four canonical parquet paths) and that
+          # the grocery pipeline reports healthy.
+          curl -fsS http://localhost:8000/health \
+            | jq -e '.grocery_pipeline.status == "healthy" and .grocery_pipeline.mode == "online"'
+          # Prove the sim->etl->api path actually produced rows, not just
+          # that the container answers. jq -e exits non-zero on a false
+          # condition or a missing key.
+          curl -fsS "http://localhost:8000/store-metrics?limit=1" \
+            | jq -e '.total > 0'
+
+      - name: Wait for the portal healthcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The portal carries its own healthcheck (wget /api/health, 10s
+          # interval, 5 retries, 20s start period). Same bounded poll.
+          portal_cid=$(docker compose ps -q portal)
+          if [ -z "$portal_cid" ]; then
+            echo "portal container not found"
+            exit 1
+          fi
+          status=""
+          for i in $(seq 1 24); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' "$portal_cid")
+            echo "portal health: $status (attempt $i/24)"
+            [ "$status" = "healthy" ] && break
+            sleep 5
+          done
+          [ "$status" = "healthy" ] || { echo "portal not healthy"; exit 1; }
+
+      - name: Assert the portal serves the dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          # /api/health proxies to the api's /health; a 200 confirms the
+          # portal can reach its upstream.
+          curl -fsS http://localhost:3000/api/health > /dev/null
+          # The dashboard root must render (200 on the HTML document).
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          # Belt-and-suspenders dump if any step beyond `Bring up the stack`
+          # fails (healthcheck waits, assertion curls, etc). Container state
+          # may already be cleaned up by then; use `ps -a` to include exited
+          # containers, and `|| true` on each log call so a missing container
+          # doesn't fail the diagnostics step itself.
+          echo "::group::docker compose ps -a"
+          docker compose ps -a || true
+          echo "::endgroup::"
+          for svc in sim-engine etl api portal; do
+            echo "::group::$svc logs"
+            docker compose logs --no-color "$svc" || true
+            echo "::endgroup::"
+          done
+
+      - name: Tear down the stack
+        if: always()
+        shell: bash
+        run: |
+          docker compose down
