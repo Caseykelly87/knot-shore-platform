@@ -1,0 +1,3 @@
+# Project-private notes and local agent state (never commit; ignored even if added by accident)
+.claude/
+CLAUDE*.md
