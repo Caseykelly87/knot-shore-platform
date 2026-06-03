@@ -1,0 +1,32 @@
+name: readme-guard
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+    branches:
+      - dev
+      - main
+
+jobs:
+  check-platform-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      # The guard reads the platform README and the checked-out submodules'
+      # own READMEs and portal source (decisions.ts, app/about routes). It
+      # uses the Python standard library only — no service dependencies and
+      # no per-submodule pytest run — so the runner's pre-installed Python
+      # is enough and the check is stable regardless of optional extras.
+      - name: Run the platform README drift guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_platform_readme.py
