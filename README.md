@@ -10,19 +10,25 @@ against bundled JSON fixtures. For the full pipeline running end-to-end
 against live (non-fixture) data, follow [Quick start](#quick-start) below.
 
 - **One-command run.** Clone with submodules, `docker compose up`, open
-  `http://localhost:3000`. The platform generates 18 months of synthetic data,
-  runs the canonical pipeline, and serves the resulting dashboards from a run
+  `http://localhost:3000`. The platform generates two paired six-month
+  windows — a 2025 demo half-year and its 2024 comparison — runs the
+  canonical pipeline, and serves the resulting dashboards from a run
   produced during that compose, not from a pre-built snapshot.
 - **Deterministic pipeline, byte-identically.** Same seed and same date
   produces byte-identical sim output, byte-identical canonical parquets, and
   byte-identical API responses. Verified mechanically in the upstream test
   suites.
-- **Detection across three rule kinds.** Five static-band rules over
-  store-day metrics (`revenue_band`, `labor_pct_band`, `avg_ticket_band`,
-  `transactions_band`, `yoy_comp`), one rolling-baseline rule
-  (`revenue_zscore_28d`) that catches gradual drift the static bands miss,
-  and one structural-integrity rule (`department_coverage`) that flags
-  missing or duplicated department rows at department grain.
+- **Detection across band, baseline, and structural rules.** Nine rules
+  are defined; six fire on the canonical dataset. Five static-band rules
+  over store-day metrics (`revenue_band`, `labor_pct_band`,
+  `avg_ticket_band`, `transactions_band`, `yoy_comp`), one rolling-baseline
+  rule (`revenue_zscore_28d`) that catches gradual drift the static bands
+  miss, and three department-grain rules (`department_coverage`,
+  `gross_margin_band`, `department_reconciliation`) that flag missing or
+  duplicated department rows, margin outliers, and store totals that don't
+  reconcile to their department detail. The three pure value-band rules
+  (`revenue_band`, `labor_pct_band`, `avg_ticket_band`) are within band on
+  this dataset and fire nothing; the other six produce the 178 flags.
 - **Dual-mode architecture treated as a contract.** The portal and the API
   each support an offline mode (bundled fixtures) and an online mode (live
   upstream) without code changes; this orchestration runs both in online
@@ -39,12 +45,13 @@ against live (non-fixture) data, follow [Quick start](#quick-start) below.
 
 The platform is built around a fictional grocery chain — 8 stores in the
 St. Louis metropolitan area, three trade-area profiles (`suburban-family`,
-`urban-dense`, `value-market`), 10 departments per store, and 18 months of
-daily operational data. The data is synthetic but realistic: per-store
-baselines, day-of-week and seasonal variation, a four-year promotion
-schedule, optional macro-economic multipliers from real FRED/BLS series, and
-deliberate anomaly injection with a ground-truth log used downstream for
-detection-quality measurement.
+`urban-dense`, `value-market`), 10 departments per store, and two paired
+six-month windows of daily operational data — a 2025 demo half-year and
+its 2024 year-over-year comparison. The data is synthetic but realistic:
+per-store baselines, day-of-week and seasonal variation, a four-year
+promotion schedule, optional macro-economic multipliers from real FRED/BLS
+series, and deliberate anomaly injection with a ground-truth log used
+downstream for detection-quality measurement.
 
 Four services form a one-direction pipeline. The simulation engine generates
 CSV output for a paired-year window (a 184-day demo window in 2025 plus the
@@ -207,20 +214,23 @@ description field, so the portal builds one client-side.
 
 ![About — engineering decisions](docs/images/about-decisions.png)
 
-The engineering perspective on the platform. Six sub-pages plus four
+The engineering perspective on the platform. Five sub-pages plus four
 per-service deep dives:
 
 - `/about/architecture` — platform-wide overview, including a mermaid
   data-flow diagram and the four properties the architecture optimizes
   for (explainability, deterministic regeneration, dual-mode operation,
   clean cross-repo contracts).
-- `/about/decisions` — 28 architectural decisions across six categories,
+- `/about/decisions` — 31 architectural decisions across six categories,
   each with rationale, cost, and revisit conditions; the deeper entries
   carry problem / rejected / honest-note fields.
 - `/about/lessons` — what broke during the build and what it taught.
 - `/about/operations` — what would change to run this at production
   scale; the orchestration's [Production shape](#production-shape) section
   points here.
+- `/about/detection-quality` — how the detection layer is evaluated:
+  recall, false-positive rate, and the contract verdict measured against
+  the sim engine's ground-truth anomaly log.
 - `/about/sim-engine`, `/about/etl`, `/about/api`, `/about/portal` —
   per-service deep dives.
 
@@ -255,27 +265,38 @@ the sim engine's [README](services/sim-engine/README.md#determinism).
 
 ### Detection that mixes band, baseline, and structural rules
 
-The detection layer (in the ETL) evaluates seven rules across three
-kinds. Five statistical-band rules over store-day metrics —
-`revenue_band`, `labor_pct_band`, `avg_ticket_band`, `transactions_band`,
-`yoy_comp` — check whether each day's value sits inside an expected
-band. One rolling-baseline rule, `revenue_zscore_28d`, computes the
-trailing 28-day mean and stddev of `total_sales` per store (current row
-excluded, the same shape `yoy_comp` uses against T-365) and flags any
-day whose `|z|` is at least 2.5; severity reads `|z|` directly with
-buckets at 2.5–3 / 3–4 / ≥ 4. The rolling rule catches gradual drift
+The detection layer (in the ETL) defines nine rules across three kinds;
+six fire on the canonical dataset. Five statistical-band rules over
+store-day metrics — `revenue_band`, `labor_pct_band`, `avg_ticket_band`,
+`transactions_band`, `yoy_comp` — check whether each day's value sits
+inside an expected band. One rolling-baseline rule, `revenue_zscore_28d`,
+computes the trailing 28-day mean and stddev of `total_sales` per store
+(current row excluded, the same shape `yoy_comp` uses against T-365) and
+flags any day whose `|z|` is at least 2.5; severity reads `|z|` directly
+with buckets at 2.5–3 / 3–4 / ≥ 4. The rolling rule catches gradual drift
 that sits inside the static bands but well outside the store's recent
-distribution. One structural-integrity rule, `department_coverage`,
-runs over the department-grain metrics and flags any store-day whose
-department row count is not 10 or that carries a duplicated
-`department_id`.
+distribution. Three department-grain rules read the
+`department_daily_metrics` frame: `department_coverage` flags any store-day
+whose department row count is not 10 or that carries a duplicated
+`department_id`; `gross_margin_band` flags a store-day carrying a department
+`gross_margin_pct` outside its band; and `department_reconciliation` flags a
+store-day whose department `net_sales` don't sum to the store-grain
+`total_sales` within a $1.00 tolerance.
+
+The three pure value-band rules (`revenue_band`, `labor_pct_band`,
+`avg_ticket_band`) are within band on this synthetic dataset and fire
+nothing — legitimately-defined rules that don't trigger on this data, not
+dead code. The other six produce 178 flags: 124 department-grain (52
+`department_coverage`, 72 `department_reconciliation`), 24 `gross_margin_band`,
+and 30 store-day value-and-rolling flags (18 `transactions_band`, 1
+`yoy_comp`, 11 `revenue_zscore_28d`).
 
 All three kinds of rule write to the same `anomaly_flags.parquet` with
 the same schema. The portal's exceptions view doesn't care which kind a
 flag came from. Band and baseline rules use the same `severity_score`
-field (with kind-specific bucket cutoffs) and the structural rule emits
+field (with kind-specific bucket cutoffs) and the structural rules emit
 a fixed `severity_level`; the same per-rule filter UI surfaces all
-three. The detection vocabulary is extensible: a new rule at any grain
+of them. The detection vocabulary is extensible: a new rule at any grain
 plugs into the same evaluation pipeline.
 
 Depth: ETL [README](services/etl/README.md#exception-detection),
@@ -360,9 +381,9 @@ section for what that looks like in the logs.
 ## Service repositories
 
 Each submodule is its own repository with its own CI, tests, and
-README. Submodule pointers track each subrepo's `dev` branch tip,
+README. Submodule pointers track each subrepo's `main` branch tip,
 so `git submodule update --remote` advances each service to its
-latest reviewed work. Editing a service means committing in that
+latest released work. Editing a service means committing in that
 repo first, then updating the orchestration's submodule reference.
 
 | Service | Path | Repository |
@@ -383,7 +404,7 @@ Brief role of each:
   seed.
 - **ETL** — two pipelines in one repo. The grocery pipeline ingests the
   sim engine's CSV output, validates schema and referential integrity,
-  runs the seven detection rules, and writes four canonical parquets. The
+  runs the nine detection rules, and writes four canonical parquets. The
   macro pipeline ingests FRED / BLS / USDA ERS series into SQLite by
   default (Postgres via `DATABASE_URL`); not exercised by this compose.
   287 tests across both pipelines, no live API or DB calls in the suite.
@@ -394,7 +415,7 @@ Brief role of each:
   enforce response contracts. 180 tests, all isolated from live
   databases.
 - **Portal** — Next.js 14 App Router application. Three primary pages
-  (dashboard, store drilldown, exceptions) plus the eight-page about
+  (dashboard, store drilldown, exceptions) plus the nine-page about
   section. Server components for data fetching, recharts for charts (v2
   pinned), URL-synced state via `useSearchParams`. 222 tests covering
   pure logic and infrastructure boundaries; presentational components
@@ -474,10 +495,14 @@ Working on a service:
    git commit -m "chore(submodule): bump <name> to <short-sha>"
    ```
 
-The pin is a specific commit, not a branch tracking ref. This keeps the
-orchestrated platform deterministic: a `git checkout` at any point in
-this repo's history brings up the exact set of service commits that were
-working together at that time.
+Although `.gitmodules` declares `branch = main` for each submodule — so
+`git submodule update --remote` advances a pointer to that branch's tip —
+the pointer committed in this repo's tree is always a specific commit, not
+a floating ref. That is what keeps the orchestrated platform deterministic:
+a `git checkout` at any point in this repo's history brings up the exact
+set of service commits that were working together at that time. Moving to
+newer service work is the deliberate `--remote` plus commit step above, not
+an automatic follow.
 
 The orchestration repo itself carries no application code, only the
 Dockerfiles, the compose file, and this documentation. The service
